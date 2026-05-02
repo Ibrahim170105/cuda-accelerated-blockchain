@@ -112,30 +112,54 @@ __device__ void sha256_device(const unsigned char* input, int len, unsigned char
 }
 
 __device__ bool hasLeadingZeros(unsigned char* hash) {
-    int fullBytes = 6;
+    int fullBytes = 3; //for first 6 characters
     for (int i = 0; i < fullBytes; i++) {
         if (hash[i] != 0x00) return false;
     }
     return true;
 }
-
+__device__ int uintToAscii(unsigned int val, char* buf) {
+    if (val == 0) {
+        buf[0] = '0';
+        return 1;
+    }
+    int len = 0;
+    char temp[12]; 
+    while (val > 0) {
+        temp[len++] = '0' + (val % 10);
+        val /= 10;
+    }
+    for (int i = 0; i < len; i++) {
+        buf[i] = temp[len - 1 - i];
+    }
+    return len;
+}
 __global__ 
-
 void mineKernel(const unsigned char* header,int headerLen,unsigned int batchStart,unsigned int* resultNonce,int* found){
     if (*found) return; // already found hash, skip work
     unsigned int nonce = batchStart + blockIdx.x * blockDim.x + threadIdx.x; // calculate nonce
     unsigned char input[256]; // buffer for header + nonce and padding
     memcpy(input, header, headerLen); // copy header into buffer]
-    input[headerLen    ] = (nonce >> 24) & 0xFF; //copy nonce into buffer in big endian format
-    input[headerLen + 1] = (nonce >> 16) & 0xFF;
-    input[headerLen + 2] = (nonce >>  8) & 0xFF;
-    input[headerLen + 3] = (nonce      ) & 0xFF;
+    char nonceStr[12];
+    int nonceLen = uintToAscii(nonce, nonceStr);
+    
+    // Copy the ASCII digits into the input buffer
+    for(int i = 0; i < nonceLen; i++) {
+        input[headerLen + i] = nonceStr[i];
+    }
       
     unsigned char hash[32]; // buffer to hold hash
+    int totalLen = headerLen + nonceLen;
 
-    sha256_device(input, headerLen + 4, hash);// computer hash using self defined function sha256_hash()
-     // check if hash is valid 
+    sha256_device(input, totalLen, hash);// computer hash using self defined function sha256_hash()
+     
+          // check if hash is valid 
      if (hasLeadingZeros(hash)) {
+        printf("[DEBUG] GPU Input Array  : '");
+        for(int i = 0; i < totalLen; i++) {
+            printf("%c", input[i]);
+        }
+        printf("'\n");
         if (atomicCAS(found, 0, 1) == 0) {
             *resultNonce = nonce;
         }
@@ -161,6 +185,7 @@ std::pair <std::string,std::string> findHashGPU(char * header){
     dim3 grid(blocks);
     dim3 block(threadsPerBlock);
     while(!h_found){
+        printf("launching kernel with batch starting nonce: %u\n", batchStart);
         mineKernel<<<grid, block>>>(d_header, headerLen, batchStart, d_resultNonce, d_found);
         cudaDeviceSynchronize();
         cudaMemcpy(&h_found, d_found, sizeof(int), cudaMemcpyDeviceToHost);
@@ -172,7 +197,8 @@ std::pair <std::string,std::string> findHashGPU(char * header){
     //get the hash using cpu funciton to avoid overhead
 
     std::string finalInputStr = std::string(header) + std::to_string(h_nonce);
-    
+    // ADD THIS LINE:
+    printf("\n[DEBUG] CPU Input String : '%s'\n", finalInputStr.c_str());
     std::string safeHash = sha256(finalInputStr);  
     std::string safeNonce = std::to_string(h_nonce);
 
