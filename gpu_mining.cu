@@ -199,6 +199,21 @@ void mineKernel(const unsigned char* header,int headerLen,unsigned int batchStar
         }
     }
 } 
+// wrapper function to launch kernel (same format as defined by tko22 in simple blockchain)
+pair <char *,char *> findHashGPU(char * header){
+    int headerLen= strlen(header);
+    unsigned char *d_header; // creating device pointers for global memory in device
+    unsigned int *d_resultNonce;
+    int *d_found;
+    cudaMalloc(&d_header, headerLen); // allocate memory on device for header, result nonce and found flag
+    cudaMalloc(&d_resultNonce, sizeof(unsigned int));
+    cudaMalloc(&d_found, sizeof(int));
+    cudaMemcpy(d_header, header, headerLen, cudaMemcpyHostToDevice); // copy header from host to device
+    cudaMemset(d_resultNonce, 0, sizeof(unsigned int));
+    cudaMemset(d_found, 0, sizeof(int));
+
+
+}
 
 
   
