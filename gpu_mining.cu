@@ -212,6 +212,24 @@ pair <char *,char *> findHashGPU(char * header){
     cudaMemset(d_resultNonce, 0, sizeof(unsigned int));
     cudaMemset(d_found, 0, sizeof(int));
 
+    const int threadsPerBlock = 256;
+    const int blocks = 4096; // calculate number of blocks needed to cover entire nonce space
+    unsigned int batchStart=0;
+    int h_found=0;
+    dim3 grid(blocks);
+    dim3 block(threadsPerBlock);
+    while(!h_found){
+        mineKernel<<<BLOCKS, THREADS>>>(
+            d_header, headerLen, batchStart,
+            difficulty, d_nonce, d_found
+        );
+        cudaDeviceSynchronize();
+        cudaMemcpy(&h_found, d_found, sizeof(int), cudaMemcpyDeviceToHost);
+        batchStart += BLOCKS * THREADS;
+    }
+    
+
+
 
 }
 
