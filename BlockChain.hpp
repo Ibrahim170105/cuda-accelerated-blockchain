@@ -8,6 +8,8 @@
 #include <vector>
 #include <memory>
 #include <stdexcept>
+#include "gpu_mining.h"
+#include "common.hpp"
 
 #include "json.hh"
 using json = nlohmann::json;
@@ -32,8 +34,8 @@ BlockChain::BlockChain(int genesis ){
     if (genesis == 0) {
         vector<string> v;
         v.push_back("Genesis Block!");
-        // string header = to_string(0) + string("00000000000000") + getMerkleRoot(v);
-        auto hash_nonce_pair = findHash(0,string("00000000000000"),v);
+        string header = to_string(0) + string("00000000000000") + getMerkleRoot(v);
+        auto hash_nonce_pair = findHashGPU(const_cast<char*>(header.c_str()));
     
         this -> blockchain.push_back(std::make_unique<Block>(0,string("00000000000000"),hash_nonce_pair.first,hash_nonce_pair.second,v));
         printf("Created blockchain!\n");

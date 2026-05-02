@@ -1,7 +1,4 @@
-#include <stdio.h>
-#include <string.h>
-#include <stdint.h>
-#include "mining_gpu.h"
+#include "gpu_mining.h"
 // helper macros for sha-256
 #define ROTR(x, n)  (((x) >> (n)) | ((x) << (32 - (n))))
 #define CH(x, y, z) (((x) & (y)) ^ (~(x) & (z)))
@@ -10,33 +7,6 @@
 #define EP1(x)      (ROTR(x,  6) ^ ROTR(x, 11) ^ ROTR(x, 25))
 #define SIG0(x)     (ROTR(x,  7) ^ ROTR(x, 18) ^ ((x) >>  3))
 #define SIG1(x)     (ROTR(x, 17) ^ ROTR(x, 19) ^ ((x) >> 10))
-
-// pair<string,string> findHash(int index, string prevHash, vector<string> &merkle) {
-//     string header = to_string(index) + prevHash + getMerkleRoot(merkle);
-//     unsigned int nonce;
-//     for (nonce = 0; nonce < 100000000000; nonce++ ) {
-//         string blockHash = sha256(header + to_string(nonce));
-//         if (blockHash.substr(0,6) == "000000"){
-//             // cout << "nonce: " << nonce;
-//             // cout << "header: " << header;
-//             return make_pair(blockHash,to_string(nonce));
-//             break;
-//         }
-//     }
-//     return make_pair("fail","fail");
-// }
-// __global__ void findHashGPU(int index, char * prevHash, char * merkleRoot, char * resultHash, char * resultNonce) {
-//     int nonce = blockIdx.x * blockDim.x + threadIdx.x;
-//     if (nonce < 100000000000) {
-//         string header = to_string(index) + string(prevHash) + string(merkleRoot);
-//         string blockHash = sha256(header + to_string(nonce));
-//         if (blockHash.substr(0,6) == "000000"){
-//             // Copy the result back to the host
-//             strcpy(resultHash, blockHash.c_str());
-//             strcpy(resultNonce, to_string(nonce).c_str());
-//         }
-//     }
-// }
 
 __constant__ uint32_t K[64] = {
     0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5,
@@ -63,8 +33,8 @@ __device__ void sha256_device(const unsigned char* input, int len, unsigned char
              h2 = 0x3c6ef372, h3 = 0xa54ff53a,
              h4 = 0x510e527f, h5 = 0x9b05688c,
              h6 = 0x1f83d9ab, h7 = 0x5be0cd19;
-    unsigned char msg[128];   // enough for header+nonce + padding
-    memset(msg, 0, 128); //fill buffer with zeros
+    unsigned char msg[256];   // enough for header+nonce + padding
+    memset(msg, 0, 256); //fill buffer with zeros
     memcpy(msg, input, len); // copy header+nonce into buffer
 
     msg[len] = 0x80; //append 1 to buffer after message
@@ -116,40 +86,7 @@ __device__ void sha256_device(const unsigned char* input, int len, unsigned char
         h4 += e; h5 += f; h6 += g; h7 += h;
     }
     // produce final hash value (big-endian)
-    // ── Process each 64-byte chunk
-    for (int chunk = 0; chunk < padded_len; chunk += 64) {
-
-        // build message schedule W[0..63]
-        uint32_t W[64];
-
-        // first 16 words: straight from the message chunk
-        for (int i = 0; i < 16; i++) {
-            W[i] = ((uint32_t)msg[chunk + i*4    ] << 24) |
-                   ((uint32_t)msg[chunk + i*4 + 1] << 16) |
-                   ((uint32_t)msg[chunk + i*4 + 2] <<  8) |
-                   ((uint32_t)msg[chunk + i*4 + 3]);
-        }
-
-        // remaining 48 words: derived from previous words
-        for (int i = 16; i < 64; i++) {
-            W[i] = SIG1(W[i-2]) + W[i-7] + SIG0(W[i-15]) + W[i-16];
-        }
-
-        // ── Compression — the core of SHA-256
-        uint32_t a = h0, b = h1, c = h2, d = h3,
-                 e = h4, f = h5, g = h6, h = h7;
-
-        for (int i = 0; i < 64; i++) {
-            uint32_t T1 = h + EP1(e) + CH(e,f,g) + K[i] + W[i];
-            uint32_t T2 = EP0(a) + MAJ(a,b,c);
-            h = g; g = f; f = e; e = d + T1;
-            d = c; c = b; b = a; a = T1 + T2;
-        }
-
-        // ── Add compressed chunk to current hash
-        h0 += a; h1 += b; h2 += c; h3 += d;
-        h4 += e; h5 += f; h6 += g; h7 += h;
-    }
+    
     // ── Produce final 32-byte hash (big-endian)
     output[ 0] = (h0 >> 24) & 0xFF; output[ 1] = (h0 >> 16) & 0xFF;
     output[ 2] = (h0 >>  8) & 0xFF; output[ 3] = (h0)       & 0xFF;
@@ -179,17 +116,17 @@ __device__ bool hasLeadingZeros(unsigned char* hash) {
 
 __global__ 
 
-void mineKernel(const unsigned char* header,int headerLen,unsigned int batchStart,int difficulty,unsigned int* resultNonce,int* found){
-    if (*found) return // already found hash, skip work
+void mineKernel(const unsigned char* header,int headerLen,unsigned int batchStart,unsigned int* resultNonce,int* found){
+    if (*found) return; // already found hash, skip work
     unsigned int nonce = batchStart + blockIdx.x * blockDim.x + threadIdx.x; // calculate nonce
-    unsigned char input[128]; // buffer for header + nonce and padding
+    unsigned char input[256]; // buffer for header + nonce and padding
     memcpy(input, header, headerLen); // copy header into buffer]
     input[headerLen    ] = (nonce >> 24) & 0xFF; //copy nonce into buffer in big endian format
     input[headerLen + 1] = (nonce >> 16) & 0xFF;
     input[headerLen + 2] = (nonce >>  8) & 0xFF;
     input[headerLen + 3] = (nonce      ) & 0xFF;
       
-    unsigned char hash[32] // buffer to hold hash
+    unsigned char hash[32]; // buffer to hold hash
 
     sha256_device(input, headerLen + 4, hash);// computer hash using self defined function sha256_hash()
      // check if hash is valid 
@@ -200,15 +137,15 @@ void mineKernel(const unsigned char* header,int headerLen,unsigned int batchStar
     }
 } 
 // wrapper function to launch kernel (same format as defined by tko22 in simple blockchain)
-pair <char *,char *> findHashGPU(char * header){
+pair <std::string,std::string> findHashGPU(char * header){
     int headerLen= strlen(header);
     unsigned char *d_header; // creating device pointers for global memory in device
     unsigned int *d_resultNonce;
     int *d_found;
-    cudaMalloc(&d_header, headerLen); // allocate memory on device for header, result nonce and found flag
+    cudaMalloc(&d_header, headerLen + 1); // allocate memory on device for header, result nonce and found flag
     cudaMalloc(&d_resultNonce, sizeof(unsigned int));
     cudaMalloc(&d_found, sizeof(int));
-    cudaMemcpy(d_header, header, headerLen, cudaMemcpyHostToDevice); // copy header from host to device
+    cudaMemcpy(d_header, header, headerLen + 1, cudaMemcpyHostToDevice); // copy header from host to device
     cudaMemset(d_resultNonce, 0, sizeof(unsigned int));
     cudaMemset(d_found, 0, sizeof(int));
 
@@ -219,18 +156,25 @@ pair <char *,char *> findHashGPU(char * header){
     dim3 grid(blocks);
     dim3 block(threadsPerBlock);
     while(!h_found){
-        mineKernel<<<BLOCKS, THREADS>>>(
-            d_header, headerLen, batchStart,
-            difficulty, d_nonce, d_found
-        );
+        mineKernel<<<grid, block>>>(d_header, headerLen, batchStart, d_resultNonce, d_found);
         cudaDeviceSynchronize();
         cudaMemcpy(&h_found, d_found, sizeof(int), cudaMemcpyDeviceToHost);
-        batchStart += BLOCKS * THREADS;
+        batchStart += blocks * threadsPerBlock;
     }
+    //get winning nonce back to host
+    unsigned int h_nonce;
+    cudaMemcpy(&h_nonce, d_resultNonce, sizeof(unsigned int), cudaMemcpyDeviceToHost);
+    //get the hash using cpu funciton to avoid overhead
+
+    std::string finalInputStr = std::string(header) + std::to_string(h_nonce);
+    char * finalHash = sha256(const_cast<char*>(finalInputStr.c_str()));  
+    char * finalNonceStr = strdup(std::to_string(h_nonce).c_str());
+
+    cudaFree(d_header);
+    cudaFree(d_resultNonce);
+    cudaFree(d_found);
     
-
-
-
+    return make_pair(finalHash, finalNonceStr);
 }
 
 
