@@ -1,4 +1,9 @@
 #include "gpu_mining.h"
+#include <stdio.h>
+#include <string>
+#include <stdint.h>
+#include <utility> 
+#include "hash.hpp"
 // helper macros for sha-256
 #define ROTR(x, n)  (((x) >> (n)) | ((x) << (32 - (n))))
 #define CH(x, y, z) (((x) & (y)) ^ (~(x) & (z)))
@@ -137,7 +142,7 @@ void mineKernel(const unsigned char* header,int headerLen,unsigned int batchStar
     }
 } 
 // wrapper function to launch kernel (same format as defined by tko22 in simple blockchain)
-pair <std::string,std::string> findHashGPU(char * header){
+std::pair <std::string,std::string> findHashGPU(char * header){
     int headerLen= strlen(header);
     unsigned char *d_header; // creating device pointers for global memory in device
     unsigned int *d_resultNonce;
@@ -167,14 +172,15 @@ pair <std::string,std::string> findHashGPU(char * header){
     //get the hash using cpu funciton to avoid overhead
 
     std::string finalInputStr = std::string(header) + std::to_string(h_nonce);
-    char * finalHash = sha256(const_cast<char*>(finalInputStr.c_str()));  
-    char * finalNonceStr = strdup(std::to_string(h_nonce).c_str());
+    
+    std::string safeHash = sha256(finalInputStr);  
+    std::string safeNonce = std::to_string(h_nonce);
 
     cudaFree(d_header);
     cudaFree(d_resultNonce);
     cudaFree(d_found);
     
-    return make_pair(finalHash, finalNonceStr);
+    return std::make_pair(safeHash, safeNonce);
 }
 
 
