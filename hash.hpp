@@ -11,7 +11,7 @@
 using namespace std;
 
 
-string sha256(const string str) {
+inline string sha256(const string str) {
     unsigned char hash[SHA256_DIGEST_LENGTH];
     SHA256_CTX sha256;
     SHA256_Init(&sha256);

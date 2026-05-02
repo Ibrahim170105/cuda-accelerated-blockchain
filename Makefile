@@ -1,32 +1,37 @@
-EXENAME = main
-OBJS = main.o gpu_mining.o
-
-# Compilers
+# Variables
+TARGET = main
 CXX = g++
 NVCC = nvcc
 
-# Compiler Flags
+# Flags
+# -O3 ensures your mining code is fast
+# -rdc=true is used for CUDA relocatable device code
 CXXFLAGS = -std=c++14 -Wall -O3
-NVCCFLAGS = -std=c++14 -O3
+NVCCFLAGS = -std=c++14 -O3 -rdc=true -Xcompiler -Wall
+LDFLAGS = -lssl -lcrypto -lboost_system -lcudart
 
-# Linker Flags (Libraries)
-LDFLAGS = -lssl -lcrypto -lboost_system
+# Files
+SRCS_CPP = main.cpp
+SRCS_CU  = gpu_mining.cu
+OBJS     = main.o gpu_mining.o
+HDRS     = gpu_mining.h
 
-# Default target
-all: $(EXENAME)
+.PHONY: all clean
 
-# Link everything together using NVCC to automatically include CUDA runtime libraries
-$(EXENAME): $(OBJS)
-	$(NVCC) $(OBJS) $(LDFLAGS) -o $(EXENAME)
+all: $(TARGET)
 
-# Rule to compile standard C++ files
-%.o: %.cpp
-	$(CXX) $(CXXFLAGS) -c $< -o $@
+# Final Link: Combines everything into one main executable
+$(TARGET): $(OBJS)
+	$(NVCC) $(NVCCFLAGS) $(OBJS) $(LDFLAGS) -o $(TARGET)
 
-# Rule to compile CUDA files
-%.o: %.cu
-	$(NVCC) $(NVCCFLAGS) -c $< -o $@
+# Rule for main.o
+main.o: $(SRCS_CPP) $(HDRS)
+	$(CXX) $(CXXFLAGS) -c $(SRCS_CPP) -o main.o
 
-# Clean up build files
+# Rule for gpu_mining.o
+gpu_mining.o: $(SRCS_CU) $(HDRS)
+	$(NVCC) $(NVCCFLAGS) -c $(SRCS_CU) -o gpu_mining.o
+
 clean:
-	-rm -f *.o $(EXENAME)
+	@rm -f *.o $(TARGET)
+	@echo "All object files and the main executable have been removed."
