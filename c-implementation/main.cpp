@@ -172,7 +172,7 @@ int main() {
             scanf("%200s",tmp);
             string str = tmp;
             printf("Entered '%s' into block\n",str.c_str());
-            for(int i=0;i<1000;i++){
+            for(int i=0;i<4000;i++){
                 v.push_back(str);
             }
 
